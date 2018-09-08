@@ -15,6 +15,7 @@ from nltk import wordpunct_tokenize
 from nltk import WordNetLemmatizer
 from nltk import sent_tokenize
 from nltk import pos_tag
+from nltk import FreqDist, bigrams, trigrams, MLEProbDist, ConditionalFreqDist, ConditionalProbDist
 
 
 import spacy
@@ -103,14 +104,61 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
     def vectorize(self, sentence):
         linguistic = self.linguistic_features(sentence)
         function_word_densities = self.function_word_densities(sentence)
+        constituent_sizes = self.constituent_sizes(sentence)
+        perplexity = self.perplexity(sentence)
         
-        return linguistic + function_word_densities
+        return (linguistic + 
+                function_word_densities + 
+                constituent_sizes +
+                perplexity)
+    
+    def build_uni_freq_dist(self, sentence_list):
+        """
+        Returns a frequency distibution of words in a list of sentences
+        """
+        
+        words = [word for sublist in [sent.split() for sent in sentence_list] for word in sublist]
+        
+        uni_freq_dist = FreqDist(words)
+        
+        return uni_freq_dist
+    
+    def build_bi_con_prob_dist(self, sentence_list):
+        """
+        Returns a conditional probability distibution for 
+        the bigrams in a list of sentences
+        """
+        
+        bgrams = [bigram for sublist in [bigrams(['<s>'] + sent.split()) for sent in sentence_list] for bigram in sublist]
+        
+        bi_cfreq_dist = ConditionalFreqDist(bgrams)
+        bi_cprob_dist = ConditionalProbDist(bi_cfreq_dist, 
+                                            MLEProbDist)
+        
+        return bi_cprob_dist
+    
+    def build_tri_con_prob_dist(self, sentence_list):
+        """
+        Returns a conditional probability distibution for 
+        the trigrams in a list of sentences
+        """
+        
+        trgrams = [trigram for sublist in [trigrams(['<s>', '<s>'] + sent.split()) for sent in sentence_list] for trigram in sublist]
+        
+        condition_pairs = (((w0, w1), w2) for w0, w1, w2 in trgrams)
+        tri_cfreq_dist = ConditionalFreqDist(condition_pairs)
+        tri_cprob_dist = ConditionalProbDist(tri_cfreq_dist, 
+                                             MLEProbDist)
+        
+        return tri_cprob_dist
     
     
     def linguistic_features(self, sentence):
-        #Returns an arrady containing num of right-branching nodes,
+        """
+        Returns an arrady containing num of right-branching nodes,
         #num of left-branching nodes, branching index, num of premodifiers,
         #num of postmodifiers, and modification index
+        """
         
         sent = self.nlp(sentence)
         
@@ -230,6 +278,12 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
         
     def function_word_densities(self, sentence):
         
+        """
+        Returns the sentence densities of function words, determiners,
+        pronouns, prepositions, punctuations, auxiliaries, conjunctions,
+        and wh-pronouns
+        """
+        
         sent = self.nlp(sentence)
         
         function = 0
@@ -266,9 +320,61 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
                                             punctuations, 
                                             auxiliaries, 
                                             conjunctions, 
-                                            wh_pronouns]]    
+                                            wh_pronouns]]
+    
+    def constituent_sizes(self, sentence):
+        """
+        Returns the number of words in noun phrases, adjectival phrases,
+        prepositional phrases, and adverbial phrases
+        """
+    
+        sent = self.nlp(sentence)
+        
+        np_lengths = []
+        ajp_lengths = []
+        pp_lengths = []
+        avp_lengths = []
+        
+        for chunk in sent.noun_chunks:
+            np_lengths.append(len(chunk))
+            
+        for token in sent:
+            if token.dep == amod:
+                ajp_lengths.append(len([child for child in token.subtree]))
+            if token.dep == prep:
+                pp_lengths.append(len([child for child in token.subtree]))
+            if token.dep in [advcl, advmod, npadvmod]:
+                avp_lengths.append(len([child for child in token.subtree]))
+        
+        for result in [np_lengths, ajp_lengths, pp_lengths, avp_lengths]:
+            if len(result) == 0:
+                result.append(0)  
+        
+        return [sum(np_lengths)/len(np_lengths), 
+                max(np_lengths), 
+                sum(ajp_lengths)/len(ajp_lengths), 
+                max(ajp_lengths), 
+                sum(pp_lengths)/len(pp_lengths), 
+                max(pp_lengths), 
+                sum(avp_lengths)/len(avp_lengths), 
+                max(avp_lengths), 
+                len(sent)]
+        
+    def perplexity(self, sentence):
+        """
+        Returns the per word sentence perplexity for unigram, bigram, 
+        and trigram models for the base sentence and pos
+        """
         
         
+        
+        
+        return [uni_sent_per,
+                bi_sent_per,
+                tri_sent_per,
+                uni_pos_per,
+                bi_pos_per,
+                tri_sent_per]
         
         
         
