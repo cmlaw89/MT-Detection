@@ -13,9 +13,9 @@ from nltk.corpus import stopwords as sw
 from nltk.corpus import wordnet as wn
 from nltk import wordpunct_tokenize
 from nltk import WordNetLemmatizer
-from nltk import sent_tokenize
+from nltk import word_tokenize
 from nltk import pos_tag
-from nltk import FreqDist, bigrams, trigrams, MLEProbDist, ConditionalFreqDist, ConditionalProbDist
+from nltk import FreqDist, bigrams, trigrams, MLEProbDist, ConditionalFreqDist, ConditionalProbDist, ConditionalProbDistI, LaplaceProbDist
 
 
 import spacy
@@ -54,6 +54,7 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
     def __init__(self):
         
         self.nlp = spacy.load('en')
+        self.tri_cprob_dist = ConditionalProbDistI()
         self.modifiers = [advcl, 
                           advmod, 
                           amod, 
@@ -117,7 +118,9 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
         Returns a frequency distibution of words in a list of sentences
         """
         
-        words = [word for sublist in [sent.split() for sent in sentence_list] for word in sublist]
+        words = [word for sublist in 
+                 [word_tokenize(sent.lower()) for sent in sentence_list] 
+                 for word in sublist]
         
         uni_freq_dist = FreqDist(words)
         
@@ -129,7 +132,10 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
         the bigrams in a list of sentences
         """
         
-        bgrams = [bigram for sublist in [bigrams(['<s>'] + sent.split()) for sent in sentence_list] for bigram in sublist]
+        bgrams = [bigram for sublist in 
+                  [bigrams(['<s>'] + word_tokenize(sent.lower())) 
+                  for sent in sentence_list] 
+                  for bigram in sublist]
         
         bi_cfreq_dist = ConditionalFreqDist(bgrams)
         bi_cprob_dist = ConditionalProbDist(bi_cfreq_dist, 
@@ -143,14 +149,23 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
         the trigrams in a list of sentences
         """
         
-        trgrams = [trigram for sublist in [trigrams(['<s>', '<s>'] + sent.split()) for sent in sentence_list] for trigram in sublist]
+        trgrams = [trigram for sublist in 
+                   [trigrams(['<s>', '<s>'] + word_tokenize(sent.lower())) 
+                   for sent in sentence_list] 
+                   for trigram in sublist]
+        
+        ###################################
+        ## Add Lidstone/Laplace smoothing##
+        ###################################
         
         condition_pairs = (((w0, w1), w2) for w0, w1, w2 in trgrams)
-        tri_cfreq_dist = ConditionalFreqDist(condition_pairs)
-        tri_cprob_dist = ConditionalProbDist(tri_cfreq_dist, 
+        tri_cfreq_dist = FreqDist(trgrams)
+        tri_cprob_dist = LaplaceProbDist(tri_cfreq_dist, 
                                              MLEProbDist)
         
-        return tri_cprob_dist
+        self.tri_cprob_dist = tri_cprob_dist
+        
+        return self.tri_cprob_dist
     
     
     def linguistic_features(self, sentence):
@@ -217,12 +232,12 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
                 cconj_index = consts.index(token)
                 if cconj_index > 0:
                     length_difference = abs(
-                            len([ch for ch in consts[cconj_index - 1].subtree]) + 
-                            1 - 
-                            len([ch for ch in consts[cconj_index + 1].subtree]))
+                        len([ch for ch in consts[cconj_index - 1].subtree]) + 
+                        1 - 
+                        len([ch for ch in consts[cconj_index + 1].subtree]))
                 else:
                     length_difference = abs(1 - 
-                            len([ch for ch in consts[cconj_index + 1].subtree]))
+                        len([ch for ch in consts[cconj_index + 1].subtree]))
                 if length_difference > coordination_ballance:
                     coordination_ballance = length_difference
         
@@ -296,11 +311,13 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
         wh_pronouns = 0
         
         for token in sent:
-            if token.pos in self.function_pos or token.tag_ in self.function_tag:
+            if (token.pos in self.function_pos 
+                or token.tag_ in self.function_tag):
                 function += 1
             if token.pos in [DET] or token.tag_ in ["DT"]:
                 determiners += 1
-            if token.pos in [PRON] or token.tag_ in ['PRP', 'PRP$', 'WP', 'WP$']:
+            if (token.pos in [PRON] 
+                or token.tag_ in ['PRP', 'PRP$', 'WP', 'WP$']):
                 pronouns += 1
             if token.tag_ in ["IN"]:
                 prepositions += 1
@@ -366,15 +383,19 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
         and trigram models for the base sentence and pos
         """
         
+        sent = word_tokenize(sentence.lower())
         
+        trgrams = [(["<s>", "<s>"] + sent)[n:n+3] for n in range(len(sent))]
+        tri_sent_per = 2 ** sum([self.tri_cprob_dist[(trigram[0], trigram[1])].logprob(trigram[2]) for trigram in trgrams])
         
+        return tri_sent_per
         
-        return [uni_sent_per,
-                bi_sent_per,
-                tri_sent_per,
-                uni_pos_per,
-                bi_pos_per,
-                tri_sent_per]
+        #return [uni_sent_per,
+        #        bi_sent_per,
+        #        tri_sent_per,
+        #        uni_pos_per,
+        #        bi_pos_per,
+        #        tri_sent_per]
         
         
         
